@@ -11,7 +11,7 @@
         .btn-main { background: #e74c3c; color: white; width: 100%; font-size: 20px; margin-top: 20px; }
         .btn-action { background: #3498db; color: white; min-width: 100px; }
         .btn-confirm { background: #27ae60 !important; color: white; font-weight: bold; width: 100%; font-size: 18px; margin-top: 15px; display: none; }
-        .btn-skip { background: #95a5a6; color: white; margin-top: 10px; width: 100%; }
+        .btn-skip { background: #95a5a6; color: white; margin-top: 10px; width: 100%; display: none; } /* 처음엔 숨김 */
         input { padding: 12px; border-radius: 5px; border: none; width: 85%; margin-bottom: 10px; background: #2c3e50; color: white; text-align: center; }
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
         .dead { text-decoration: line-through; color: #7f8c8d; opacity: 0.5; }
@@ -22,6 +22,7 @@
         #morning-report { background: #2c3e50; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: left; white-space: pre-line; display: none; border: 1px solid #3498db; }
         #private-report { background: #130f40; border-radius: 10px; padding: 15px; margin: 10px 0; border: 2px solid #f1c40f; color: #f1c40f; font-weight: bold; font-size: 18px; display: none; }
         #victory-screen { background: #f1c40f; color: black; font-weight: bold; padding: 30px; border-radius: 20px; display: none; margin-top: 50px; }
+        #waiting-timer { color: #f1c40f; font-size: 14px; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -44,6 +45,8 @@
         <div id="selected-display" class="selected-name"></div>
         <button id="confirm-btn" class="btn-confirm">능력 사용 확정</button>
     </div>
+
+    <div id="waiting-timer"></div>
 
     <div id="vote-input-area" style="display:none;" class="card">
         <p>오늘 처형할 사람의 이름을 적으세요</p>
@@ -90,22 +93,18 @@
         const rawInput = document.getElementById('playerInput').value;
         const names = rawInput.split(',').map(n => n.trim()).filter(n => n !== "");
         if (names.length < 4) return;
-
         let mafiaCount = names.length >= 10 ? 3 : (names.length >= 7 ? 2 : 1);
         let gameJobs = Array(mafiaCount).fill("마피아");
         gameJobs.push("경찰", "의사");
-
         let remainingCount = names.length - gameJobs.length;
         if (remainingCount >= 2) { gameJobs.push("연인", "연인"); remainingCount -= 2; }
         let pool = Object.keys(jobDetails).filter(j => !["마피아", "경찰", "의사", "연인"].includes(j)).sort(() => Math.random() - 0.5);
         for(let i=0; i<remainingCount; i++) gameJobs.push(pool[i % pool.length]);
-
         gameJobs.sort(() => Math.random() - 0.5);
         players = names.map((name, i) => ({
             name: name, job: gameJobs[i], isAlive: true,
             hasShield: gameJobs[i] === "군인", usedSkill: false, target: null, lastUsedNight: -1
         }));
-
         document.getElementById('setup-screen').style.display = 'none';
         document.getElementById('game-screen').style.display = 'block';
         startNight();
@@ -147,6 +146,7 @@
         selectedDisplay.innerText = "";
         tempTarget = null;
 
+        // 동료 정보 표시
         if (p.job === "마피아") {
             const partners = players.filter(pt => pt.job === "마피아" && pt.name !== p.name && pt.isAlive);
             if (partners.length > 0) {
@@ -172,45 +172,59 @@
             confirmBtn.onclick = () => executeAction(p, target);
         };
 
+        // 버튼 렌더링
         if (p.job === "마피아") {
             renderPlayerButtons(actions, prepareAction, true);
-            let aliveMafias = nightPlayers.filter(m => m.job === "마피아");
             let remainingMafiaInQueue = false;
             for (let i = turnIndex + 1; i < nightPlayers.length; i++) {
                 if (nightPlayers[i].job === "마피아") { remainingMafiaInQueue = true; break; }
             }
             if (remainingMafiaInQueue) {
-                let skipBtn = document.createElement('button'); skipBtn.innerText = "동료에게 선택 맡기기";
-                skipBtn.className = "btn-skip"; skipBtn.onclick = () => { mafiaVotes[p.name] = "skip"; finishTurn(); };
-                actions.appendChild(skipBtn);
+                addDelayedButton(actions, "동료에게 선택 맡기기", () => { mafiaVotes[p.name] = "skip"; finishTurn(); });
             }
         } else if (p.job === "경찰") renderPlayerButtons(actions, prepareAction);
         else if (p.job === "의사") renderPlayerButtons(actions, prepareAction, true);
         else if (p.job === "영매" && nightCount > 1 && p.lastUsedNight !== nightCount - 1) {
             renderDeadButtons(actions, prepareAction);
-            addPassButton(actions, "능력 아끼고 넘기기");
+            addDelayedButton(actions, "능력 아끼고 넘기기", finishTurn);
         } else if (p.job === "기자" && !p.usedSkill) {
             renderPlayerButtons(actions, prepareAction);
-            addPassButton(actions, "능력 아끼고 넘기기");
+            addDelayedButton(actions, "능력 아끼고 넘기기", finishTurn);
         } else if (p.job === "성직자" && !p.usedSkill) {
             renderDeadButtons(actions, prepareAction);
-            addPassButton(actions, "능력 아끼고 넘기기");
-        } else if (p.job === "테러리스트") renderPlayerButtons(actions, prepareAction);
-        else {
-            // 스킬 없는 사람이나 사망자도 확인 버튼을 누르게 변경
-            addPassButton(actions, "확인 완료");
+            addDelayedButton(actions, "능력 아끼고 넘기기", finishTurn);
+        } else if (p.job === "테러리스트") {
+            renderPlayerButtons(actions, prepareAction);
+        } else {
+            addDelayedButton(actions, "확인 완료", finishTurn);
         }
 
         display.innerHTML += `<div class="job-desc">${jobDetails[p.job]}</div>`;
     }
 
-    function addPassButton(area, text) {
-        let passBtn = document.createElement('button'); 
-        passBtn.innerText = text;
-        passBtn.className = "btn-skip"; 
-        passBtn.style.background = "#34495e"; // 일반 확인은 색상을 다르게
-        passBtn.onclick = finishTurn; 
-        area.appendChild(passBtn);
+    // 3초 대기 후 버튼을 보여주는 핵심 함수
+    function addDelayedButton(area, text, callback) {
+        const timerText = document.getElementById('waiting-timer');
+        let sec = 3;
+        timerText.innerText = `${sec}초 후 확인 가능...`;
+        
+        const btn = document.createElement('button'); 
+        btn.innerText = text;
+        btn.className = "btn-skip"; 
+        btn.onclick = () => { timerText.innerText = ""; callback(); };
+
+        const itv = setInterval(() => {
+            sec--;
+            if (sec > 0) {
+                timerText.innerText = `${sec}초 후 확인 가능...`;
+            } else {
+                clearInterval(itv);
+                timerText.innerText = "이제 버튼을 누를 수 있습니다.";
+                btn.style.display = "block";
+            }
+        }, 1000);
+
+        area.appendChild(btn);
     }
 
     function executeAction(p, target) {
@@ -232,9 +246,7 @@
 
         if (p.job === "경찰" || p.job === "영매") {
             actions.innerHTML = ""; confirmBtn.style.display = "none";
-            let nextBtn = document.createElement('button'); nextBtn.innerText = "확인 완료 및 넘기기";
-            nextBtn.className = "btn-main"; nextBtn.onclick = () => { privateReport.style.display = "none"; finishTurn(); };
-            actions.appendChild(nextBtn);
+            addDelayedButton(actions, "확인 완료 및 넘기기", () => { privateReport.style.display = "none"; finishTurn(); });
         } else { finishTurn(); }
     }
 
@@ -253,6 +265,7 @@
     }
 
     function finishTurn() {
+        document.getElementById('waiting-timer').innerText = "";
         turnIndex++;
         if (turnIndex < nightPlayers.length) showOverlay(`${nightPlayers[turnIndex].name}님의 차례입니다.`);
         else processNight();
@@ -265,7 +278,6 @@
             let t = mafiaVotes[v]; 
             if (t !== "skip") voteCounts[t] = (voteCounts[t] || 0) + 1; 
         }
-        
         let candidates = Object.keys(voteCounts);
         let targetName = null;
         if (candidates.length > 0) {
@@ -287,10 +299,8 @@
                 }
             }
         } else log += "- 아무 일도 없었습니다.\n";
-
         if (nightActions.revived) { nightActions.revived.isAlive = true; log += `- 성직자가 ${nightActions.revived.name}님을 살렸습니다.\n`; }
         if (nightActions.report) log += `- [특종] ${nightActions.report.name}님은 [${nightActions.report.job}]입니다.\n`;
-        
         showDayScreen(log);
         checkVictory();
     }
@@ -299,15 +309,12 @@
         document.getElementById('phase-title').innerText = "낮 시간";
         const report = document.getElementById('morning-report');
         if(log) { report.innerHTML = log; report.style.display = 'block'; }
-        
         const display = document.getElementById('main-display');
         const actions = document.getElementById('action-buttons');
         document.getElementById('confirm-btn').style.display = "none";
         document.getElementById('selected-display').innerText = "";
-        
         display.innerHTML = "<h3>생존 현황</h3>";
         players.forEach(p => { display.innerHTML += `<div class="${p.isAlive ? '' : 'dead'}">${p.name} [${p.isAlive ? '생존' : '사망'}]</div>`; });
-        
         actions.innerHTML = `<button class="btn-main" onclick="startNight()">투표 없이 밤으로</button>`;
         if (!voteUsedToday) { actions.innerHTML += `<button class="btn-main" style="background:#8e44ad" onclick="showVoteInput()">처형 투표(이름 입력)</button>`; }
     }
