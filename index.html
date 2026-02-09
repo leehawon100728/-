@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>마피아 릴레이 사회자</title>
+    <style>
+        body { font-family: 'Pretendard', sans-serif; text-align: center; background: #121212; color: white; padding: 20px; }
+        .card { background: #1e1e1e; border-radius: 15px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
+        button { padding: 12px 20px; font-size: 16px; margin: 5px; cursor: pointer; border-radius: 8px; border: none; }
+        .btn-main { background: #e74c3c; color: white; width: 100%; font-size: 20px; margin-top: 20px; }
+        .btn-action { background: #3498db; color: white; min-width: 100px; }
+        .btn-confirm { background: #27ae60 !important; color: white; font-weight: bold; width: 100%; font-size: 18px; margin-top: 15px; display: none; }
+        .btn-skip { background: #95a5a6; color: white; margin-top: 10px; width: 100%; }
+        input { padding: 12px; border-radius: 5px; border: none; width: 85%; margin-bottom: 10px; background: #2c3e50; color: white; text-align: center; }
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .dead { text-decoration: line-through; color: #7f8c8d; opacity: 0.5; }
+        .selected-name { color: #f1c40f; font-weight: bold; margin: 10px 0; font-size: 18px; min-height: 25px; }
+        .team-info { background: #c0392b; padding: 8px 15px; border-radius: 8px; font-size: 16px; margin-top: 10px; display: inline-block; }
+        .mafia-vote-info { background: #444; border: 1px solid #e74c3c; padding: 10px; border-radius: 8px; font-size: 14px; margin: 10px 0; color: #ff7675; }
+        .job-desc { font-size: 12px; color: #aaa; margin-top: 15px; line-height: 1.5; border-top: 1px solid #444; padding-top: 10px; }
+        #morning-report { background: #2c3e50; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: left; white-space: pre-line; display: none; border: 1px solid #3498db; }
+        #private-report { background: #130f40; border-radius: 10px; padding: 15px; margin: 10px 0; border: 2px solid #f1c40f; color: #f1c40f; font-weight: bold; font-size: 18px; display: none; }
+        #victory-screen { background: #f1c40f; color: black; font-weight: bold; padding: 30px; border-radius: 20px; display: none; margin-top: 50px; }
+    </style>
+</head>
+<body>
+
+<div id="setup-screen" class="card">
+    <h1>🕵️‍♂️ 릴레이 마피아 (13인)</h1>
+    <p>이름을 쉼표(,)로 구분 (4~13명)</p>
+    <input type="text" id="playerInput" placeholder="이름1,이름2,이름3,이름4...">
+    <button class="btn-main" onclick="initGame()">게임 시작</button>
+</div>
+
+<div id="game-screen" style="display:none;">
+    <h2 id="phase-title">밤이 되었습니다</h2>
+    <div id="morning-report"></div>
+    <div id="main-display" class="card"></div>
+    <div id="private-report"></div>
+    <div id="action-buttons"></div>
+    
+    <div id="confirm-area">
+        <div id="selected-display" class="selected-name"></div>
+        <button id="confirm-btn" class="btn-confirm">능력 사용 확정</button>
+    </div>
+
+    <div id="vote-input-area" style="display:none;" class="card">
+        <p>오늘 처형할 사람의 이름을 적으세요</p>
+        <input type="text" id="deadPlayerName" placeholder="이름 입력">
+        <button class="btn-main" onclick="executeVote()">사망 처리 및 밤으로</button>
+    </div>
+
+    <div id="timer-display" style="font-size: 20px; color: #f1c40f; margin-top:10px;"></div>
+</div>
+
+<div id="victory-screen">
+    <h1 id="victory-msg">승리!</h1>
+    <p id="victory-details"></p>
+    <button class="btn-main" style="background: black; color: white;" onclick="location.reload()">새 게임 시작</button>
+</div>
+
+<div id="overlay" class="overlay" style="display:none;">
+    <h1 id="overlay-msg">폰을 넘겨주세요</h1>
+    <button class="btn-main" style="width: 200px;" onclick="revealTurn()">확인 (나만 보기)</button>
+</div>
+
+<script>
+    let players = [];
+    let nightPlayers = []; 
+    let mafiaVotes = {}; 
+    let nightActions = {}; 
+    let turnIndex = 0;
+    let nightCount = 0;
+    let tempTarget = null;
+    let voteUsedToday = false;
+
+    const jobDetails = {
+        "마피아": "밤마다 한 명을 처단합니다. 동료와 갈리면 지목된 후보 중 랜덤 처단됩니다.",
+        "경찰": "매일 밤 한 명을 조사하여 마피아 여부를 확인합니다.",
+        "의사": "마피아의 공격으로부터 한 명을 보호합니다. (본인 가능)",
+        "군인": "총격을 한 번 버팁니다. 버틸 시 아침에 공지됩니다.",
+        "연인": "서로의 정체를 압니다. 한 명이 죽으면 다른 연인이 대신 죽습니다.",
+        "테러리스트": "밤에 지목한 대상을 사망 시 길동무로 삼습니다.",
+        "영매": "2밤에 1번, 사망자의 직업을 확인합니다.",
+        "성직자": "단 한 번, 죽은 플레이어를 부활시킵니다.",
+        "기자": "단 한 번, 밤에 조사한 정체를 아침에 공지합니다.",
+        "정치인": "투표로 죽지 않습니다. 밤에는 능력이 없습니다."
+    };
+
+    function initGame() {
+        const rawInput = document.getElementById('playerInput').value;
+        const names = rawInput.split(',').map(n => n.trim()).filter(n => n !== "");
+        if (names.length < 4) return;
+
+        let mafiaCount = names.length >= 10 ? 3 : (names.length >= 7 ? 2 : 1);
+        let gameJobs = Array(mafiaCount).fill("마피아");
+        gameJobs.push("경찰", "의사");
+
+        let remainingCount = names.length - gameJobs.length;
+        if (remainingCount >= 2) { gameJobs.push("연인", "연인"); remainingCount -= 2; }
+        let pool = Object.keys(jobDetails).filter(j => !["마피아", "경찰", "의사", "연인"].includes(j)).sort(() => Math.random() - 0.5);
+        for(let i=0; i<remainingCount; i++) gameJobs.push(pool[i % pool.length]);
+
+        gameJobs.sort(() => Math.random() - 0.5);
+        players = names.map((name, i) => ({
+            name: name, job: gameJobs[i], isAlive: true,
+            hasShield: gameJobs[i] === "군인", usedSkill: false, target: null, lastUsedNight: -1
+        }));
+
+        document.getElementById('setup-screen').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'block';
+        startNight();
+    }
+
+    function startNight() {
+        if(checkVictory()) return; 
+        nightPlayers = players.filter(p => p.isAlive);
+        document.getElementById('morning-report').style.display = 'none';
+        document.getElementById('vote-input-area').style.display = 'none';
+        document.getElementById('phase-title').innerText = `${nightCount + 1}번째 밤`;
+        nightCount++; turnIndex = 0; mafiaVotes = {}; voteUsedToday = false;
+        nightActions = { killed: null, saved: null, report: null, revived: null };
+        showOverlay(`${nightPlayers[0].name}님의 차례입니다.`);
+    }
+
+    function showOverlay(msg) {
+        document.getElementById('overlay').style.display = 'flex';
+        document.getElementById('overlay-msg').innerText = msg;
+    }
+
+    function revealTurn() {
+        document.getElementById('overlay').style.display = 'none';
+        renderTurn();
+    }
+
+    function renderTurn() {
+        const p = nightPlayers[turnIndex];
+        const display = document.getElementById('main-display');
+        const actions = document.getElementById('action-buttons');
+        const confirmBtn = document.getElementById('confirm-btn');
+        const selectedDisplay = document.getElementById('selected-display');
+        const privateReport = document.getElementById('private-report');
+        
+        display.innerHTML = `<h3>${p.name}님 [${p.job}]</h3>`;
+        actions.innerHTML = "";
+        privateReport.style.display = "none";
+        confirmBtn.style.display = "none";
+        selectedDisplay.innerText = "";
+        tempTarget = null;
+
+        if (p.job === "마피아") {
+            const partners = players.filter(pt => pt.job === "마피아" && pt.name !== p.name && pt.isAlive);
+            if (partners.length > 0) {
+                display.innerHTML += `<div class="team-info">동료: ${partners.map(pt => pt.name).join(', ')}</div>`;
+                let vLogs = [];
+                partners.forEach(pt => { 
+                    if (mafiaVotes[pt.name]) {
+                        let status = mafiaVotes[pt.name] === "skip" ? "선택 맡김" : `→ [${mafiaVotes[pt.name]}]`;
+                        vLogs.push(`${pt.name}: ${status}`);
+                    }
+                });
+                if (vLogs.length > 0) display.innerHTML += `<div class="mafia-vote-info">동료 현황:<br>${vLogs.join('<br>')}</div>`;
+            }
+        } else if (p.job === "연인") {
+            const partners = players.filter(pt => pt.job === "연인" && pt.name !== p.name && pt.isAlive);
+            if (partners.length > 0) display.innerHTML += `<div class="team-info">연인: ${partners.map(pt => pt.name).join(', ')}</div>`;
+        }
+
+        const prepareAction = (target) => {
+            tempTarget = target;
+            selectedDisplay.innerText = `대상: ${target.name}`;
+            confirmBtn.style.display = "block";
+            confirmBtn.onclick = () => executeAction(p, target);
+        };
+
+        if (p.job === "마피아") {
+            renderPlayerButtons(actions, prepareAction, true);
+            
+            // 내 뒤에 남은 생존 마피아가 있는지 확인
+            let remainingMafiaInQueue = false;
+            for (let i = turnIndex + 1; i < nightPlayers.length; i++) {
+                if (nightPlayers[i].job === "마피아") {
+                    remainingMafiaInQueue = true;
+                    break;
+                }
+            }
+            
+            // 내 뒤에 마피아가 한 명이라도 있을 때만 맡기기 버튼 생성
+            if (remainingMafiaInQueue) {
+                let skipBtn = document.createElement('button');
+                skipBtn.innerText = "동료에게 선택 맡기기";
+                skipBtn.className = "btn-skip";
+                skipBtn.onclick = () => { mafiaVotes[p.name] = "skip"; finishTurn(); };
+                actions.appendChild(skipBtn);
+            }
+        } else if (p.job === "경찰") renderPlayerButtons(actions, prepareAction);
+        else if (p.job === "의사") renderPlayerButtons(actions, prepareAction, true);
+        else if (p.job === "영매" && nightCount > 1 && p.lastUsedNight !== nightCount - 1) {
+            renderDeadButtons(actions, prepareAction);
+            addPassButton(actions);
+        } else if (p.job === "기자" && !p.usedSkill) {
+            renderPlayerButtons(actions, prepareAction);
+            addPassButton(actions);
+        } else if (p.job === "성직자" && !p.usedSkill) {
+            renderDeadButtons(actions, prepareAction);
+            addPassButton(actions);
+        } else if (p.job === "테러리스트") renderPlayerButtons(actions, prepareAction);
+        else startBluffing();
+
+        display.innerHTML += `<div class="job-desc">${jobDetails[p.job]}</div>`;
+    }
+
+    function addPassButton(area) {
+        let passBtn = document.createElement('button'); passBtn.innerText = "능력 아끼고 넘기기";
+        passBtn.className = "btn-skip"; passBtn.onclick = finishTurn; area.appendChild(passBtn);
+    }
+
+    function executeAction(p, target) {
+        const privateReport = document.getElementById('private-report');
+        const actions = document.getElementById('action-buttons');
+        const confirmBtn = document.getElementById('confirm-btn');
+
+        if (p.job === "경찰") {
+            privateReport.innerHTML = `🔍 결과: ${target.name}님은 ${target.job === "마피아" ? "<span style='color:red'>마피아(O)</span>" : "<span style='color:white'>마피아 아님(X)</span>"}`;
+            privateReport.style.display = "block";
+        } else if (p.job === "영매") {
+            privateReport.innerHTML = `👻 결과: ${target.name}님은 [${target.job}]입니다.`;
+            privateReport.style.display = "block";
+        } else if (p.job === "마피아") mafiaVotes[p.name] = target.name;
+        else if (p.job === "의사") nightActions.saved = target.name;
+        else if (p.job === "기자") { nightActions.report = target; p.usedSkill = true; }
+        else if (p.job === "성직자") { nightActions.revived = target; p.usedSkill = true; }
+        else if (p.job === "테러리스트") p.target = target.name;
+
+        if (p.job === "경찰" || p.job === "영매") {
+            actions.innerHTML = ""; confirmBtn.style.display = "none";
+            let nextBtn = document.createElement('button'); nextBtn.innerText = "확인 완료 및 넘기기";
+            nextBtn.className = "btn-main"; nextBtn.onclick = () => { privateReport.style.display = "none"; finishTurn(); };
+            actions.appendChild(nextBtn);
+        } else { finishTurn(); }
+    }
+
+    function renderPlayerButtons(area, callback, self = false) {
+        players.filter(p => p.isAlive).forEach(p => {
+            if (!self && p.name === nightPlayers[turnIndex].name) return;
+            let btn = document.createElement('button'); btn.className = "btn-action"; btn.innerText = p.name;
+            btn.onclick = () => callback(p); area.appendChild(btn);
+        });
+    }
+
+    function renderDeadButtons(area, callback) {
+        let deads = players.filter(p => !p.isAlive);
+        if (deads.length === 0) { area.innerHTML = "사망자 없음"; }
+        else { deads.forEach(p => { let b = document.createElement('button'); b.className = "btn-action"; b.innerText = p.name; b.onclick = () => callback(p); area.appendChild(b); }); }
+    }
+
+    function startBluffing() {
+        let sec = 3; 
+        const timer = document.getElementById('timer-display');
+        const itv = setInterval(() => { timer.innerText = `처리 중... ${sec}초`; if (sec <= 0) { clearInterval(itv); timer.innerText = ""; finishTurn(); } sec--; }, 1000);
+    }
+
+    function finishTurn() {
+        turnIndex++;
+        if (turnIndex < nightPlayers.length) showOverlay(`${nightPlayers[turnIndex].name}님의 차례입니다.`);
+        else processNight();
+    }
+
+    function processNight() {
+        let log = "☀️ <b>밤 사이 일어난 일:</b>\n";
+        let voteCounts = {};
+        for (let v in mafiaVotes) { 
+            let t = mafiaVotes[v]; 
+            if (t !== "skip") voteCounts[t] = (voteCounts[t] || 0) + 1; 
+        }
+        
+        let candidates = Object.keys(voteCounts);
+        let targetName = null;
+        if (candidates.length > 0) {
+            let maxV = Math.max(...Object.values(voteCounts));
+            let winners = candidates.filter(name => voteCounts[name] === maxV);
+            targetName = winners[Math.floor(Math.random() * winners.length)]; 
+        }
+
+        if (targetName) {
+            let t = players.find(p => p.name === targetName);
+            if (nightActions.saved === targetName) log += `- 의사가 공격으로부터 ${t.name}님을 지켰습니다.\n`;
+            else if (t.job === "군인" && t.hasShield) { t.hasShield = false; log += `- [방탄] ${t.name}님이 공격을 버텼습니다.\n`; }
+            else {
+                let lover = players.find(p => p.job === "연인" && p.name !== t.name && p.isAlive);
+                if (t.job === "연인" && lover) { lover.isAlive = false; log += `- 연인 ${lover.name}님이 대신 사망했습니다.\n`; }
+                else { 
+                    t.isAlive = false; log += `- ${t.name}님이 사망했습니다.\n`; 
+                    if (t.job === "테러리스트" && t.target) { let v = players.find(p => p.name === t.target); if (v && v.isAlive) { v.isAlive = false; log += `- 자폭! ${v.name}님 사망.\n`; } }
+                }
+            }
+        } else log += "- 아무 일도 없었습니다.\n";
+
+        if (nightActions.revived) { nightActions.revived.isAlive = true; log += `- 성직자가 ${nightActions.revived.name}님을 살렸습니다.\n`; }
+        if (nightActions.report) log += `- [특종] ${nightActions.report.name}님은 [${nightActions.report.job}]입니다.\n`;
+        
+        showDayScreen(log);
+        checkVictory();
+    }
+
+    function showDayScreen(log) {
+        document.getElementById('phase-title').innerText = "낮 시간";
+        const report = document.getElementById('morning-report');
+        if(log) { report.innerHTML = log; report.style.display = 'block'; }
+        
+        const display = document.getElementById('main-display');
+        const actions = document.getElementById('action-buttons');
+        document.getElementById('confirm-btn').style.display = "none";
+        document.getElementById('selected-display').innerText = "";
+        
+        display.innerHTML = "<h3>생존 현황</h3>";
+        players.forEach(p => { display.innerHTML += `<div class="${p.isAlive ? '' : 'dead'}">${p.name} [${p.isAlive ? '생존' : '사망'}]</div>`; });
+        
+        actions.innerHTML = `<button class="btn-main" onclick="startNight()">투표 없이 밤으로</button>`;
+        if (!voteUsedToday) { actions.innerHTML += `<button class="btn-main" style="background:#8e44ad" onclick="showVoteInput()">처형 투표(이름 입력)</button>`; }
+    }
+
+    function showVoteInput() {
+        document.getElementById('action-buttons').innerHTML = "";
+        document.getElementById('vote-input-area').style.display = 'block';
+    }
+
+    function executeVote() {
+        const inputName = document.getElementById('deadPlayerName').value.trim();
+        const target = players.find(p => p.name === inputName && p.isAlive);
+        if (!target) return;
+        if (target.job === "정치인") { alert("정치인은 투표로 죽지 않습니다!"); }
+        else {
+            target.isAlive = false;
+            if (target.job === "테러리스트" && target.target) {
+                let v = players.find(p => p.name === target.target);
+                if (v && v.isAlive) { v.isAlive = false; alert(`테러 자폭! ${v.name}님 사망.`); }
+            }
+        }
+        voteUsedToday = true;
+        document.getElementById('deadPlayerName').value = "";
+        startNight();
+    }
+
+    function checkVictory() {
+        const aliveMafia = players.filter(p => p.isAlive && p.job === "마피아").length;
+        const aliveCitizen = players.filter(p => p.isAlive && p.job !== "마피아").length;
+        if (aliveMafia === 0) { endGame("시민팀 승리!", "모든 마피아가 제거되었습니다."); return true; } 
+        else if (aliveMafia >= aliveCitizen) { endGame("마피아 승리!", "마피아 수가 시민팀보다 많거나 같습니다."); return true; }
+        return false;
+    }
+
+    function endGame(title, detail) {
+        document.getElementById('game-screen').style.display = 'none';
+        const vScreen = document.getElementById('victory-screen');
+        vScreen.style.display = 'block';
+        document.getElementById('victory-msg').innerText = title;
+        let jobsInfo = players.map(p => `${p.name}: ${p.job} (${p.isAlive ? '생존' : '사망'})`).join('<br>');
+        document.getElementById('victory-details').innerHTML = `${detail}<br><br><b>[최종 직업 공개]</b><br>${jobsInfo}`;
+        vScreen.style.background = (title === "마피아 승리!") ? "#c0392b" : "#27ae60";
+    }
+</script>
+</body>
+</html>
