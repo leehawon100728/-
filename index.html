@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>마피아 릴레이 사회자</title>
+    <title>마피아 릴레이 사회자 (최종)</title>
     <style>
         body { font-family: 'Pretendard', sans-serif; text-align: center; background: #121212; color: white; padding: 20px; }
         .card { background: #1e1e1e; border-radius: 15px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
@@ -50,8 +50,6 @@
         <input type="text" id="deadPlayerName" placeholder="이름 입력">
         <button class="btn-main" onclick="executeVote()">사망 처리 및 밤으로</button>
     </div>
-
-    <div id="timer-display" style="font-size: 20px; color: #f1c40f; margin-top:10px;"></div>
 </div>
 
 <div id="victory-screen">
@@ -176,44 +174,43 @@
 
         if (p.job === "마피아") {
             renderPlayerButtons(actions, prepareAction, true);
-            
-            // 내 뒤에 남은 생존 마피아가 있는지 확인
+            let aliveMafias = nightPlayers.filter(m => m.job === "마피아");
             let remainingMafiaInQueue = false;
             for (let i = turnIndex + 1; i < nightPlayers.length; i++) {
-                if (nightPlayers[i].job === "마피아") {
-                    remainingMafiaInQueue = true;
-                    break;
-                }
+                if (nightPlayers[i].job === "마피아") { remainingMafiaInQueue = true; break; }
             }
-            
-            // 내 뒤에 마피아가 한 명이라도 있을 때만 맡기기 버튼 생성
             if (remainingMafiaInQueue) {
-                let skipBtn = document.createElement('button');
-                skipBtn.innerText = "동료에게 선택 맡기기";
-                skipBtn.className = "btn-skip";
-                skipBtn.onclick = () => { mafiaVotes[p.name] = "skip"; finishTurn(); };
+                let skipBtn = document.createElement('button'); skipBtn.innerText = "동료에게 선택 맡기기";
+                skipBtn.className = "btn-skip"; skipBtn.onclick = () => { mafiaVotes[p.name] = "skip"; finishTurn(); };
                 actions.appendChild(skipBtn);
             }
         } else if (p.job === "경찰") renderPlayerButtons(actions, prepareAction);
         else if (p.job === "의사") renderPlayerButtons(actions, prepareAction, true);
         else if (p.job === "영매" && nightCount > 1 && p.lastUsedNight !== nightCount - 1) {
             renderDeadButtons(actions, prepareAction);
-            addPassButton(actions);
+            addPassButton(actions, "능력 아끼고 넘기기");
         } else if (p.job === "기자" && !p.usedSkill) {
             renderPlayerButtons(actions, prepareAction);
-            addPassButton(actions);
+            addPassButton(actions, "능력 아끼고 넘기기");
         } else if (p.job === "성직자" && !p.usedSkill) {
             renderDeadButtons(actions, prepareAction);
-            addPassButton(actions);
+            addPassButton(actions, "능력 아끼고 넘기기");
         } else if (p.job === "테러리스트") renderPlayerButtons(actions, prepareAction);
-        else startBluffing();
+        else {
+            // 스킬 없는 사람이나 사망자도 확인 버튼을 누르게 변경
+            addPassButton(actions, "확인 완료");
+        }
 
         display.innerHTML += `<div class="job-desc">${jobDetails[p.job]}</div>`;
     }
 
-    function addPassButton(area) {
-        let passBtn = document.createElement('button'); passBtn.innerText = "능력 아끼고 넘기기";
-        passBtn.className = "btn-skip"; passBtn.onclick = finishTurn; area.appendChild(passBtn);
+    function addPassButton(area, text) {
+        let passBtn = document.createElement('button'); 
+        passBtn.innerText = text;
+        passBtn.className = "btn-skip"; 
+        passBtn.style.background = "#34495e"; // 일반 확인은 색상을 다르게
+        passBtn.onclick = finishTurn; 
+        area.appendChild(passBtn);
     }
 
     function executeAction(p, target) {
@@ -253,12 +250,6 @@
         let deads = players.filter(p => !p.isAlive);
         if (deads.length === 0) { area.innerHTML = "사망자 없음"; }
         else { deads.forEach(p => { let b = document.createElement('button'); b.className = "btn-action"; b.innerText = p.name; b.onclick = () => callback(p); area.appendChild(b); }); }
-    }
-
-    function startBluffing() {
-        let sec = 3; 
-        const timer = document.getElementById('timer-display');
-        const itv = setInterval(() => { timer.innerText = `처리 중... ${sec}초`; if (sec <= 0) { clearInterval(itv); timer.innerText = ""; finishTurn(); } sec--; }, 1000);
     }
 
     function finishTurn() {
